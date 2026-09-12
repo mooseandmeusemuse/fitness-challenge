@@ -474,7 +474,7 @@ function renderFeed(){
       <button class="del" data-id="${w.id}" title="Delete">✕</button>
     </div>`).join('');
   el.querySelectorAll('.del').forEach(b=>b.addEventListener('click', ()=>{
-    if(true /* TEMP-VERIFY-BYPASS */){
+    if(confirm('Delete this workout?')){
       state.workouts = state.workouts.filter(w=>w.id!==b.dataset.id);
       state.deleted.push(b.dataset.id);
       changed();
