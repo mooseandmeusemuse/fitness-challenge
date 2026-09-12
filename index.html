@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Fall Fitness Challenge</title>
+<script src="https://unpkg.com/mqtt@5.10.3/dist/mqtt.min.js"></script>
+<script>if(typeof mqtt==='undefined'){document.write('<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.3/dist/mqtt.min.js"><\/script>')}</script>
+<style>
+  :root{
+    --bg:#0c1017; --bg2:#111826; --card:#161e2c; --card2:#1c2536;
+    --line:#26314a; --text:#eef2f8; --muted:#8d99ae;
+    --accent:#c6f24e; --accent-dim:#9dc22e; --gold:#ffd166;
+    --danger:#ff6b6b; --radius:16px;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  body{
+    margin:0; font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:radial-gradient(1200px 600px at 50% -10%, #1a2440 0%, var(--bg) 60%) fixed, var(--bg);
+    color:var(--text); min-height:100vh; padding-bottom:110px;
+  }
+  header{
+    position:sticky; top:0; z-index:20;
+    background:rgba(12,16,23,.88); backdrop-filter:blur(12px);
+    border-bottom:1px solid var(--line); padding:14px 16px 10px;
+  }
+  header h1{margin:0; font-size:20px; letter-spacing:.3px;}
+  header h1 .trophy{margin-right:6px;}
+  .sub{color:var(--muted); font-size:13px; margin-top:4px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+  .pill{background:var(--card2); border:1px solid var(--line); border-radius:999px; padding:3px 10px; font-size:12px; color:var(--text);}
+  .pill.hot{background:rgba(198,242,78,.14); border-color:var(--accent-dim); color:var(--accent); font-weight:600;}
+  nav.tabs{
+    position:sticky; top:79px; z-index:19; display:flex; gap:8px;
+    padding:10px 16px; background:rgba(12,16,23,.88); backdrop-filter:blur(12px);
+    border-bottom:1px solid var(--line);
+  }
+  nav.tabs button{
+    flex:1; border:1px solid var(--line); background:var(--card); color:var(--muted);
+    border-radius:12px; padding:10px 0; font-size:14px; font-weight:600; cursor:pointer;
+  }
+  nav.tabs button.active{background:var(--accent); color:#10160a; border-color:var(--accent);}
+  main{padding:16px; max-width:760px; margin:0 auto;}
+  section.view{display:none;} section.view.active{display:block; animation:fade .18s ease;}
+  @keyframes fade{from{opacity:0; transform:translateY(4px);} to{opacity:1; transform:none;}}
+
+  /* Leaderboard */
+  .card{
+    background:linear-gradient(180deg,var(--card2),var(--card));
+    border:1px solid var(--line); border-radius:var(--radius);
+    padding:14px 16px; margin-bottom:12px; display:flex; gap:12px; align-items:center;
+  }
+  .card.first{border-color:var(--gold); box-shadow:0 0 0 1px var(--gold), 0 8px 30px rgba(255,209,102,.12);}
+  .rank{font-size:22px; width:30px; text-align:center; flex:none;}
+  .dot{width:12px; height:12px; border-radius:50%; flex:none;}
+  .who{flex:1; min-width:0;}
+  .who .name{font-weight:700; font-size:17px;}
+  .who .meta{color:var(--muted); font-size:12.5px; margin-top:2px;}
+  .pts{text-align:right; flex:none;}
+  .pts .n{font-size:24px; font-weight:800; color:var(--accent);}
+  .card.first .pts .n{color:var(--gold);}
+  .pts .lbl{font-size:11px; color:var(--muted);}
+  .bar{height:6px; background:#0a0e15; border-radius:99px; margin-top:8px; overflow:hidden;}
+  .bar i{display:block; height:100%; background:var(--accent); border-radius:99px;}
+  .bonus-note{font-size:12px; color:var(--muted); margin-top:6px;}
+  .bonus-note b{color:var(--accent);}
+
+  /* Weeks table */
+  .tablewrap{overflow-x:auto; border:1px solid var(--line); border-radius:var(--radius); background:var(--card);}
+  table{border-collapse:collapse; width:100%; min-width:640px; font-size:13px;}
+  th,td{padding:9px 8px; text-align:center; border-bottom:1px solid var(--line); white-space:nowrap;}
+  th{background:var(--card2); color:var(--muted); font-weight:600; font-size:11.5px;}
+  th.cur, td.cur{background:rgba(198,242,78,.07);}
+  td.name,th.name{position:sticky; left:0; background:var(--card2); text-align:left; padding-left:12px; font-weight:700; z-index:2;}
+  td .c{font-weight:700; font-size:15px;}
+  td .p{font-size:11px; color:var(--muted);}
+  td .star{color:var(--gold);}
+  tfoot td{font-weight:800; background:var(--card2);}
+  .legend{color:var(--muted); font-size:12px; margin-top:8px;}
+  .legend .star{color:var(--gold);}
+
+  /* Feed */
+  .feed-item{
+    background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+    padding:12px 14px; margin-bottom:10px; display:flex; gap:12px; align-items:flex-start;
+  }
+  .ico{font-size:26px; flex:none; width:44px; height:44px; display:flex; align-items:center; justify-content:center;
+    background:var(--card2); border-radius:12px;}
+  .fi-body{flex:1; min-width:0;}
+  .fi-top{display:flex; align-items:baseline; gap:8px; flex-wrap:wrap;}
+  .fi-name{font-weight:700; font-size:14.5px;}
+  .fi-date{color:var(--muted); font-size:12px; margin-left:auto;}
+  .fi-what{font-size:14px; margin-top:2px;}
+  .fi-note{color:var(--muted); font-size:13px; margin-top:3px; font-style:italic;}
+  .del{border:none; background:none; color:var(--muted); font-size:16px; cursor:pointer; padding:4px;}
+  .empty{text-align:center; color:var(--muted); padding:36px 16px; border:1px dashed var(--line); border-radius:var(--radius);}
+
+  /* FAB + modal */
+  .fab{
+    position:fixed; right:18px; bottom:calc(20px + env(safe-area-inset-bottom)); z-index:30;
+    width:64px; height:64px; border-radius:50%; border:none; cursor:pointer;
+    background:var(--accent); color:#10160a; font-size:34px; font-weight:300; line-height:1;
+    box-shadow:0 10px 30px rgba(198,242,78,.35);
+  }
+  .fab:active{transform:scale(.94);}
+  .sheet-bg{position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:40; display:none;}
+  .sheet-bg.open{display:block;}
+  .sheet{
+    position:fixed; left:0; right:0; bottom:0; z-index:41; max-width:760px; margin:0 auto;
+    background:var(--bg2); border:1px solid var(--line); border-bottom:none;
+    border-radius:20px 20px 0 0; padding:18px 18px calc(22px + env(safe-area-inset-bottom));
+    transform:translateY(105%); transition:transform .25s ease; max-height:92vh; overflow-y:auto;
+  }
+  .sheet.open{transform:none;}
+  .sheet h2{margin:0 0 4px; font-size:18px;}
+  .sheet .hint{color:var(--muted); font-size:13px; margin-bottom:14px;}
+  .chips{display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 14px;}
+  .chips button{
+    border:1px solid var(--line); background:var(--card); color:var(--text);
+    border-radius:999px; padding:9px 14px; font-size:14px; cursor:pointer;
+  }
+  .chips button.sel{background:var(--accent); color:#10160a; border-color:var(--accent); font-weight:700;}
+  label.f{display:block; font-size:13px; color:var(--muted); margin:12px 0 6px; font-weight:600;}
+  input[type=text],input[type=date],input[type=number],textarea{
+    width:100%; background:var(--card); border:1px solid var(--line); color:var(--text);
+    border-radius:12px; padding:12px; font-size:15px; font-family:inherit;
+  }
+  textarea{resize:vertical; min-height:56px;}
+  .row2{display:flex; gap:10px;} .row2>div{flex:1;}
+  .btn{
+    width:100%; border:none; border-radius:14px; padding:15px; font-size:16px; font-weight:800;
+    background:var(--accent); color:#10160a; cursor:pointer; margin-top:16px;
+  }
+  .btn.ghost{background:var(--card); color:var(--text); border:1px solid var(--line); font-weight:600; margin-top:10px;}
+  .warn{color:var(--gold); font-size:12.5px; margin-top:8px; display:none;}
+
+  /* Settings */
+  .set-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:14px;}
+  .set-grid button{
+    border:1px solid var(--line); background:var(--card); color:var(--text);
+    border-radius:12px; padding:12px; font-size:13.5px; font-weight:600; cursor:pointer;
+  }
+  .rules{
+    background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+    padding:14px 16px; font-size:13.5px; color:var(--muted); line-height:1.65; margin-bottom:14px;
+  }
+  .rules b{color:var(--text);} .rules .hl{color:var(--accent); font-weight:700;}
+  footer{color:var(--muted); font-size:12px; text-align:center; margin-top:26px; line-height:1.6;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span class="trophy">🏆</span>Fall Fitness Challenge</h1>
+  <div class="sub">
+    <span class="pill hot" id="weekPill">Week –</span>
+    <span class="pill" id="countPill">– days to Thanksgiving</span>
+    <span class="pill" id="syncPill">● Connecting…</span>
+  </div>
+</header>
+
+<nav class="tabs">
+  <button data-tab="board" class="active">🏅 Leaderboard</button>
+  <button data-tab="feed">🔥 Workout Feed</button>
+  <button data-tab="weeks">🗓 Weeks</button>
+</nav>
+
+<main>
+  <section id="view-board" class="view active">
+    <div class="rules">
+      <b>How scoring works:</b> 1 point per workout. Hit <span class="hl">4+ workouts in a week</span>
+      and you bank a <span class="hl">+4 bonus</span> for that week. Log what you did below —
+      seeing everyone else's workouts is half the fun. Everyone with the link shares one live leaderboard.
+    </div>
+    <div id="board"></div>
+    <div class="set-grid">
+      <button id="btnCopy">📋 Copy standings</button>
+      <button id="btnAddPerson">➕ Add person</button>
+      <button id="btnExport">⬇ Export data</button>
+      <button id="btnImport">⬆ Import data</button>
+    </div>
+    <input type="file" id="fileImport" accept="application/json" style="display:none">
+  </section>
+
+  <section id="view-feed" class="view">
+    <div id="feed"></div>
+  </section>
+
+  <section id="view-weeks" class="view">
+    <div class="tablewrap"><table id="weekTable"></table></div>
+    <div class="legend"><span class="star">★</span> = 4+ workouts that week → +4 bonus &nbsp;·&nbsp; top number = workouts, bottom = points</div>
+  </section>
+
+  <footer>
+    Challenge runs Aug 31 → Thanksgiving, Nov 26, 2026.<br>
+    Everyone with the link shares one live leaderboard. Your entries sync automatically.
+  </footer>
+</main>
+
+<button class="fab" id="fab" aria-label="Log workout">+</button>
+
+<div class="sheet-bg" id="sheetBg"></div>
+<div class="sheet" id="sheet">
+  <h2>Log a workout 💪</h2>
+  <div class="hint">It counts toward the week its date falls in.</div>
+
+  <label class="f">Who</label>
+  <div class="chips" id="whoChips"></div>
+
+  <div class="row2">
+    <div>
+      <label class="f">Date</label>
+      <input type="date" id="fDate" min="2026-08-31" max="2026-11-29">
+    </div>
+    <div>
+      <label class="f">Minutes <span style="font-weight:400">(optional)</span></label>
+      <input type="number" id="fMin" min="1" max="1440" inputmode="numeric" placeholder="45">
+    </div>
+  </div>
+
+  <label class="f">What did you do?</label>
+  <div class="chips" id="actChips"></div>
+  <input type="text" id="fCustom" placeholder="Or type your own…" style="margin-top:-6px">
+
+  <label class="f">Note <span style="font-weight:400">(optional — inspire the group)</span></label>
+  <textarea id="fNote" placeholder="e.g. Felt strong today, try the hill route!"></textarea>
+  <div class="warn" id="dateWarn">⚠️ That date is outside the challenge (Aug 31 – Nov 29). It'll show in the feed but won't score.</div>
+
+  <button class="btn" id="btnSave">Save workout</button>
+  <button class="btn ghost" id="btnCancel">Cancel</button>
+</div>
+
+<script>
+/* =====================================================================
+   FALL FITNESS CHALLENGE — shared live leaderboard
+   ---------------------------------------------------------------------
+   Everyone who opens this page shares ONE leaderboard. Workouts sync
+   live through a public MQTT channel (no accounts, no signup).
+   Each device also keeps a local copy, so the app works offline and
+   nothing is ever lost if the network drops.
+   ===================================================================== */
+const SYNC_TOPIC = 'muse-ffc2026/7h3k9p2x4q/state';  // shared channel, baked in at build
+
+const STORAGE_KEY = 'ffc2026.v1';
+const CHALLENGE_START = new Date(2026, 7, 31); // Mon Aug 31, 2026 (local)
+const CHALLENGE_END   = new Date(2026, 10, 29); // Sun Nov 29, 2026
+const THANKSGIVING    = new Date(2026, 10, 26);
+const WEEKS = 13;
+const BONUS_AT = 4, BONUS_PTS = 4;
+
+const ACTIVITIES = [
+  ['Run','🏃'],['Lift','🏋️'],['Hoops','🏀'],['Walk','🚶'],['Bike','🚴'],
+  ['Swim','🏊'],['Yoga','🧘'],['Sport','⚽'],['HIIT','🔥'],['Other','✨']
+];
+const COLORS = ['#c6f24e','#5ec8f2','#f25e8a','#ffd166','#b18cff','#5ef2b8','#f2a65e','#8affda','#f28ab2','#a3b8ff'];
+
+/* ---------- state ---------- */
+function seedState(){
+  const mk = (n,person,date,activity,minutes,note)=>({
+    id:'seed-'+person.toLowerCase()+'-'+n,   // deterministic: dedupes across devices
+    person, date, activity, minutes, note: note||'', ts: Date.now()
+  });
+  return {
+    people: ['Hall','Vandy','CJ','Stone','Brad'],
+    deleted: [],
+    updatedAt: 0,
+    workouts: [
+      // Imported from the original spreadsheet (week of Sep 7–13, 2026)
+      mk(1,'Hall','2026-09-09','Other',null,'Imported from spreadsheet'),
+      mk(2,'Hall','2026-09-09','Other',null,'Imported from spreadsheet'),
+      mk(3,'Hall','2026-09-09','Other',null,'Imported from spreadsheet'),
+      mk(4,'Hall','2026-09-09','Other',null,'Imported from spreadsheet'),
+      mk(1,'Vandy','2026-09-09','Other',null,'Imported from spreadsheet'),
+      mk(2,'Vandy','2026-09-09','Other',null,'Imported from spreadsheet'),
+      mk(1,'CJ','2026-09-09','Hoops',60,'Imported from spreadsheet'),
+      mk(2,'CJ','2026-09-10','Other',60,'Training — imported from spreadsheet'),
+      mk(1,'Brad','2026-09-09','Other',null,'Imported from spreadsheet'),
+    ]
+  };
+}
+function loadState(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(raw){
+      const s = JSON.parse(raw);
+      if(s && Array.isArray(s.people) && Array.isArray(s.workouts)){
+        if(!Array.isArray(s.deleted)) s.deleted = [];
+        return s;
+      }
+    }
+  }catch(e){}
+  return seedState();
+}
+function saveState(){ try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){} }
+let state = loadState();
+let syncOnline = false, mqttClient = null, brokerIdx = 0;
+
+/* ---------- shared live sync (MQTT — no accounts, no signup) ---------- */
+const BROKERS = ['wss://broker.hivemq.com:8884/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
+function setSyncBadge(){
+  const el = document.getElementById('syncPill');
+  if(!el) return;
+  el.textContent = syncOnline ? '● Live sync' : '● Offline';
+  el.classList.toggle('hot', syncOnline);
+}
+function mergeStates(a, b){
+  const deleted = [...new Set([...(a.deleted||[]), ...(b.deleted||[])])];
+  const byId = new Map();
+  [...(a.workouts||[]), ...(b.workouts||[])].forEach(w=>{
+    if(w && w.id && !deleted.includes(w.id) && !byId.has(w.id)) byId.set(w.id, w);
+  });
+  const people = [...new Set([...(a.people||[]), ...(b.people||[])])];
+  return { people, workouts:[...byId.values()], deleted,
+           updatedAt: Math.max(a.updatedAt||0, b.updatedAt||0) };
+}
+function publishState(){
+  if(!mqttClient || !mqttClient.connected) return;
+  state.updatedAt = Date.now();
+  try{ mqttClient.publish(SYNC_TOPIC, JSON.stringify(state), {retain:true, qos:1}); }catch(e){}
+}
+function changed(){ saveState(); renderAll(); publishState(); }
+function onRemoteMessage(msg){
+  let remote; try{ remote = JSON.parse(msg.toString()); }catch(e){ return; }
+  if(!remote || !Array.isArray(remote.workouts) || !Array.isArray(remote.people)) return;
+  const before = new Set(state.workouts.map(w=>w.id));
+  state = mergeStates(state, remote);
+  const added = state.workouts.some(w=>!before.has(w.id));
+  saveState(); renderAll();
+  if(added) publishState();   // fold our entries back in so simultaneous edits never lose data
+}
+function connectSync(){
+  if(typeof mqtt === 'undefined'){ setSyncBadge(); return; }  // CDN unreachable → local-only mode
+  try{ if(mqttClient) mqttClient.end(true); }catch(e){}
+  const client = mqtt.connect(BROKERS[brokerIdx], {reconnectPeriod:4000, connectTimeout:12000});
+  mqttClient = client;
+  client.on('connect', ()=>{ syncOnline = true; setSyncBadge(); try{client.subscribe(SYNC_TOPIC,{qos:1});}catch(e){} });
+  client.on('message', (topic, msg)=>{ if(topic === SYNC_TOPIC) onRemoteMessage(msg); });
+  const markOff = ()=>{ if(syncOnline){ syncOnline = false; setSyncBadge(); } };
+  client.on('close', markOff);
+  client.on('reconnect', markOff);
+  client.on('error', ()=>{
+    brokerIdx = (brokerIdx + 1) % BROKERS.length;
+    try{ client.end(true); }catch(e){}
+    setTimeout(connectSync, 1500);
+  });
+}
+setInterval(()=>{ if(mqttClient && !mqttClient.connected) connectSync(); }, 30000);
+
+/* ---------- dates & scoring ---------- */
+const DAY = 86400000;
+function d(str){ const [y,m,dd]=str.split('-').map(Number); return new Date(y, m-1, dd); }
+function iso(dt){ return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0'); }
+function weekIndex(dateStr){
+  const diff = Math.floor((d(dateStr) - CHALLENGE_START)/DAY);
+  const i = Math.floor(diff/7);
+  return (i>=0 && i<WEEKS) ? i : -1;
+}
+function weekRange(i){
+  const s = new Date(CHALLENGE_START.getTime()+i*7*DAY);
+  const e = new Date(s.getTime()+6*DAY);
+  const f = x => x.toLocaleDateString('en-US',{month:'short',day:'numeric'});
+  return f(s)+' – '+f(e);
+}
+function weekPoints(n){ return n + (n>=BONUS_AT ? BONUS_PTS : 0); }
+function personWeekCount(person, wi){
+  return state.workouts.filter(w=>w.person===person && weekIndex(w.date)===wi).length;
+}
+function personTotals(person){
+  let w=0,p=0,b=0;
+  for(let i=0;i<WEEKS;i++){ const n=personWeekCount(person,i); w+=n; p+=weekPoints(n); if(n>=BONUS_AT)b++; }
+  return {workouts:w, points:p, bonuses:b};
+}
+function currentWeek(){
+  const today = new Date(); today.setHours(0,0,0,0);
+  const diff = Math.floor((today-CHALLENGE_START)/DAY);
+  const i = Math.floor(diff/7);
+  return (i>=0 && i<WEEKS) ? i : -1;
+}
+
+/* ---------- header ---------- */
+(function header(){
+  const cw = currentWeek();
+  document.getElementById('weekPill').textContent = cw>=0 ? `Week ${cw+1} of ${WEEKS} · ${weekRange(cw)}` : 'Challenge complete 🎉';
+  const t = new Date(); t.setHours(0,0,0,0);
+  const days = Math.round((THANKSGIVING - t)/DAY);
+  document.getElementById('countPill').textContent = days>0 ? `${days} days to Thanksgiving` : days===0 ? 'Happy Thanksgiving! 🦃' : 'Challenge complete';
+  setSyncBadge();
+})();
+
+/* ---------- tabs ---------- */
+document.querySelectorAll('nav.tabs button').forEach(b=>{
+  b.addEventListener('click', ()=>{
+    document.querySelectorAll('nav.tabs button').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    document.querySelectorAll('section.view').forEach(v=>v.classList.remove('active'));
+    document.getElementById('view-'+b.dataset.tab).classList.add('active');
+  });
+});
+
+/* ---------- leaderboard ---------- */
+function renderBoard(){
+  const cw = currentWeek();
+  const rows = state.people.map((p,idx)=>({name:p, idx, ...personTotals(p),
+    thisWeek: cw>=0 ? personWeekCount(p, cw) : 0})).sort((a,b)=> b.points-a.points || b.workouts-a.workouts);
+  const el = document.getElementById('board');
+  if(!rows.length){ el.innerHTML = '<div class="empty">No people yet — add someone to get started.</div>'; return; }
+  const medals = ['🥇','🥈','🥉'];
+  el.innerHTML = rows.map((r,pos)=>{
+    const need = Math.max(0, BONUS_AT - r.thisWeek);
+    const pct = Math.min(100, (r.thisWeek/BONUS_AT)*100);
+    const note = cw<0 ? '' : need===0
+      ? `<div class="bonus-note">🔥 Bonus locked in this week <b>(+${BONUS_PTS})</b></div>`
+      : `<div class="bonus-note"><b>${need} more</b> workout${need>1?'s':''} this week for the +${BONUS_PTS} bonus</div>`;
+    return `<div class="card${pos===0?' first':''}">
+      <div class="rank">${medals[pos]|| (pos+1)}</div>
+      <div class="dot" style="background:${COLORS[r.idx%COLORS.length]}"></div>
+      <div class="who">
+        <div class="name">${esc(r.name)}</div>
+        <div class="meta">${r.workouts} workouts · ${r.bonuses} bonus week${r.bonuses===1?'':'s'}</div>
+        ${cw>=0?`<div class="bar"><i style="width:${pct}%"></i></div>`:''}
+        ${note}
+      </div>
+      <div class="pts"><div class="n">${r.points}</div><div class="lbl">points</div></div>
+    </div>`;
+  }).join('');
+}
+
+/* ---------- weeks table ---------- */
+function renderWeeks(){
+  const cw = currentWeek();
+  let h = '<thead><tr><th class="name">Person</th>';
+  for(let i=0;i<WEEKS;i++) h += `<th class="${i===cw?'cur':''}">W${i+1}<br><span style="font-weight:400">${weekRange(i).replace(' – ','–')}</span></th>`;
+  h += '<th>Total</th></tr></thead><tbody>';
+  state.people.forEach(p=>{
+    const t = personTotals(p);
+    h += `<tr><td class="name">${esc(p)}</td>`;
+    for(let i=0;i<WEEKS;i++){
+      const n = personWeekCount(p,i), pts = weekPoints(n);
+      const star = n>=BONUS_AT ? ' <span class="star">★</span>' : '';
+      h += `<td class="${i===cw?'cur':''}"><div class="c">${n||'–'}${star}</div><div class="p">${pts} pts</div></td>`;
+    }
+    h += `<td><div class="c">${t.workouts}</div><div class="p">${t.points} pts</div></td></tr>`;
+  });
+  h += '</tbody>';
+  document.getElementById('weekTable').innerHTML = h;
+}
+
+/* ---------- feed ---------- */
+function actIcon(a){ const f = ACTIVITIES.find(x=>x[0]===a); return f?f[1]:'💪'; }
+function niceDate(ds){
+  const dt = d(ds), t = new Date(); t.setHours(0,0,0,0);
+  const diff = Math.round((dt - t)/DAY);
+  const base = dt.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+  if(diff===0) return base+' · today';
+  if(diff===-1) return base+' · yesterday';
+  if(diff===1) return base+' · tomorrow';
+  return base;
+}
+function renderFeed(){
+  const el = document.getElementById('feed');
+  const items = [...state.workouts].sort((a,b)=> b.date.localeCompare(a.date) || b.ts-a.ts);
+  if(!items.length){ el.innerHTML = '<div class="empty">Nothing logged yet.<br>Tap + to log the first workout! 💪</div>'; return; }
+  const cIdx = n => state.people.indexOf(n);
+  el.innerHTML = items.map(w=>`
+    <div class="feed-item">
+      <div class="ico">${actIcon(w.activity)}</div>
+      <div class="fi-body">
+        <div class="fi-top">
+          <span class="fi-name" style="color:${COLORS[Math.max(0,cIdx(w.person))%COLORS.length]}">${esc(w.person)}</span>
+          <span class="fi-date">${niceDate(w.date)}</span>
+        </div>
+        <div class="fi-what">${esc(w.activity)}${w.minutes?` · ${w.minutes} min`:''}</div>
+        ${w.note?`<div class="fi-note">“${esc(w.note)}”</div>`:''}
+      </div>
+      <button class="del" data-id="${w.id}" title="Delete">✕</button>
+    </div>`).join('');
+  el.querySelectorAll('.del').forEach(b=>b.addEventListener('click', ()=>{
+    if(confirm('Delete this workout?')){
+      state.workouts = state.workouts.filter(w=>w.id!==b.dataset.id);
+      state.deleted.push(b.dataset.id);
+      changed();
+    }
+  }));
+}
+
+/* ---------- log sheet ---------- */
+let selPerson = null, selActivity = 'Run';
+const sheet = document.getElementById('sheet'), sheetBg = document.getElementById('sheetBg');
+function openSheet(){
+  selPerson = state.people.includes('Hall') ? 'Hall' : state.people[0] || null;
+  selActivity = 'Run';
+  document.getElementById('fDate').value = iso(new Date());
+  document.getElementById('fMin').value = '';
+  document.getElementById('fCustom').value = '';
+  document.getElementById('fNote').value = '';
+  document.getElementById('dateWarn').style.display = 'none';
+  renderChips();
+  sheet.classList.add('open'); sheetBg.classList.add('open');
+}
+function closeSheet(){ sheet.classList.remove('open'); sheetBg.classList.remove('open'); }
+function renderChips(){
+  document.getElementById('whoChips').innerHTML = state.people.map(p=>
+    `<button class="${p===selPerson?'sel':''}" data-p="${esc(p)}">${esc(p)}</button>`).join('')
+    || '<span style="color:var(--muted);font-size:13px">Add a person first (Leaderboard tab → Add person).</span>';
+  document.querySelectorAll('#whoChips button').forEach(b=>b.addEventListener('click',()=>{selPerson=b.dataset.p; renderChips();}));
+  document.getElementById('actChips').innerHTML = ACTIVITIES.map(([a,ic])=>
+    `<button class="${a===selActivity?'sel':''}" data-a="${a}">${ic} ${a}</button>`).join('');
+  document.querySelectorAll('#actChips button').forEach(b=>b.addEventListener('click',()=>{selActivity=b.dataset.a; renderChips();}));
+}
+document.getElementById('fab').addEventListener('click', openSheet);
+document.getElementById('btnCancel').addEventListener('click', closeSheet);
+sheetBg.addEventListener('click', closeSheet);
+document.getElementById('fDate').addEventListener('change', e=>{
+  document.getElementById('dateWarn').style.display = weekIndex(e.target.value)===-1 ? 'block':'none';
+});
+document.getElementById('btnSave').addEventListener('click', ()=>{
+  if(!selPerson){ alert('Pick who this workout is for.'); return; }
+  const date = document.getElementById('fDate').value;
+  if(!date){ alert('Pick a date.'); return; }
+  const custom = document.getElementById('fCustom').value.trim();
+  const minutes = parseInt(document.getElementById('fMin').value,10);
+  state.workouts.push({
+    id: 'w'+Date.now()+Math.random().toString(36).slice(2,6),
+    person: selPerson, date,
+    activity: custom || selActivity,
+    minutes: minutes>0 ? minutes : null,
+    note: document.getElementById('fNote').value.trim(),
+    ts: Date.now()
+  });
+  changed(); closeSheet();
+});
+
+/* ---------- settings ---------- */
+document.getElementById('btnCopy').addEventListener('click', async ()=>{
+  const rows = state.people.map(p=>({name:p, ...personTotals(p)}))
+    .sort((a,b)=>b.points-a.points||b.workouts-a.workouts);
+  const medals=['🥇','🥈','🥉'];
+  const lines = ['🏆 Fall Fitness Challenge — standings',
+    ...rows.map((r,i)=>`${medals[i]||(i+1)+'.'} ${r.name}: ${r.points} pts (${r.workouts} workouts)`)];
+  const txt = lines.join('\n');
+  try{ await navigator.clipboard.writeText(txt); alert('Standings copied — paste it in the group chat!'); }
+  catch(e){ prompt('Copy these standings:', txt); }
+});
+document.getElementById('btnAddPerson').addEventListener('click', ()=>{
+  const name = prompt('Name to add:');
+  if(name && name.trim() && !state.people.includes(name.trim())){
+    state.people.push(name.trim()); changed();
+  }
+});
+document.getElementById('btnExport').addEventListener('click', ()=>{
+  const blob = new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = 'fall-fitness-challenge.json'; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+});
+document.getElementById('btnImport').addEventListener('click', ()=>document.getElementById('fileImport').click());
+document.getElementById('fileImport').addEventListener('change', e=>{
+  const f = e.target.files[0]; if(!f) return;
+  const r = new FileReader();
+  r.onload = ()=>{ try{
+      const s = JSON.parse(r.result);
+      if(s && Array.isArray(s.people) && Array.isArray(s.workouts)){
+        if(confirm('Replace all current data with this file? (This syncs to everyone.)')){
+          if(!Array.isArray(s.deleted)) s.deleted = [];
+          state = s; changed();
+        }
+      } else alert('That file doesn\'t look like challenge data.');
+    }catch(err){ alert('Couldn\'t read that file.'); } };
+  r.readAsText(f); e.target.value='';
+});
+
+/* ---------- utils & init ---------- */
+function esc(s){ return String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function renderAll(){ renderBoard(); renderWeeks(); renderFeed(); }
+renderAll();
+connectSync();   // join the live shared leaderboard
+</script>
+</body>
+</html>
