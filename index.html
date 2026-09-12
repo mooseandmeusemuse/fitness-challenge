@@ -92,6 +92,8 @@
   .fi-what{font-size:14px; margin-top:2px;}
   .fi-note{color:var(--muted); font-size:13px; margin-top:3px; font-style:italic;}
   .del{border:none; background:none; color:var(--muted); font-size:16px; cursor:pointer; padding:4px;}
+  .edit{border:none; background:none; color:var(--muted); font-size:15px; cursor:pointer; padding:4px;}
+  .edit:active,.del:active{color:var(--text);}
   .empty{text-align:center; color:var(--muted); padding:36px 16px; border:1px dashed var(--line); border-radius:var(--radius);}
 
   /* FAB + modal */
@@ -200,7 +202,7 @@
 
 <div class="sheet-bg" id="sheetBg"></div>
 <div class="sheet" id="sheet">
-  <h2>Log a workout 💪</h2>
+  <h2 id="sheetTitle">Log a workout 💪</h2>
   <div class="hint">It counts toward the week its date falls in.</div>
 
   <label class="f">Who</label>
@@ -217,9 +219,9 @@
     </div>
   </div>
 
-  <label class="f">What did you do?</label>
+  <label class="f">What did you do? <span style="font-weight:400">(pick all that apply)</span></label>
   <div class="chips" id="actChips"></div>
-  <input type="text" id="fCustom" placeholder="Or type your own…" style="margin-top:-6px">
+  <input type="text" id="fCustom" placeholder="Or add your own (comma-separated)…" style="margin-top:-6px">
 
   <label class="f">Note <span style="font-weight:400">(optional — inspire the group)</span></label>
   <textarea id="fNote" placeholder="e.g. Felt strong today, try the hill route!"></textarea>
@@ -306,7 +308,9 @@ function mergeStates(a, b){
   const deleted = [...new Set([...(a.deleted||[]), ...(b.deleted||[])])];
   const byId = new Map();
   [...(a.workouts||[]), ...(b.workouts||[])].forEach(w=>{
-    if(w && w.id && !deleted.includes(w.id) && !byId.has(w.id)) byId.set(w.id, w);
+    if(!w || !w.id || deleted.includes(w.id)) return;
+    const cur = byId.get(w.id);
+    if(!cur || (w.updated||0) > (cur.updated||0)) byId.set(w.id, w);  // newest edit wins
   });
   const people = [...new Set([...(a.people||[]), ...(b.people||[])])];
   return { people, workouts:[...byId.values()], deleted,
@@ -321,11 +325,11 @@ function changed(){ saveState(); renderAll(); publishState(); }
 function onRemoteMessage(msg){
   let remote; try{ remote = JSON.parse(msg.toString()); }catch(e){ return; }
   if(!remote || !Array.isArray(remote.workouts) || !Array.isArray(remote.people)) return;
-  const before = new Set(state.workouts.map(w=>w.id));
+  const before = new Map(state.workouts.map(w=>[w.id, JSON.stringify(w)]));
   state = mergeStates(state, remote);
-  const added = state.workouts.some(w=>!before.has(w.id));
+  const diff = state.workouts.some(w=>before.get(w.id)!==JSON.stringify(w));
   saveState(); renderAll();
-  if(added) publishState();   // fold our entries back in so simultaneous edits never lose data
+  if(diff) publishState();   // fold our entries back in so simultaneous edits never lose data
 }
 function connectSync(){
   if(typeof mqtt === 'undefined'){ setSyncBadge(); return; }  // CDN unreachable → local-only mode
@@ -446,6 +450,11 @@ function renderWeeks(){
 
 /* ---------- feed ---------- */
 function actIcon(a){ const f = ACTIVITIES.find(x=>x[0]===a); return f?f[1]:'💪'; }
+function actList(w){  // activities may be an array (new) or a single string (old data)
+  if(Array.isArray(w.activities) && w.activities.length) return w.activities;
+  if(w.activity) return [w.activity];
+  return ['Other'];
+}
 function niceDate(ds){
   const dt = d(ds), t = new Date(); t.setHours(0,0,0,0);
   const diff = Math.round((dt - t)/DAY);
@@ -460,19 +469,26 @@ function renderFeed(){
   const items = [...state.workouts].sort((a,b)=> b.date.localeCompare(a.date) || b.ts-a.ts);
   if(!items.length){ el.innerHTML = '<div class="empty">Nothing logged yet.<br>Tap + to log the first workout! 💪</div>'; return; }
   const cIdx = n => state.people.indexOf(n);
-  el.innerHTML = items.map(w=>`
+  el.innerHTML = items.map(w=>{
+    const acts = actList(w);
+    const icons = acts.map(actIcon).join('');
+    return `
     <div class="feed-item">
-      <div class="ico">${actIcon(w.activity)}</div>
+      <div class="ico"${acts.length>1?' style="font-size:20px"':''}>${icons}</div>
       <div class="fi-body">
         <div class="fi-top">
           <span class="fi-name" style="color:${COLORS[Math.max(0,cIdx(w.person))%COLORS.length]}">${esc(w.person)}</span>
           <span class="fi-date">${niceDate(w.date)}</span>
         </div>
-        <div class="fi-what">${esc(w.activity)}${w.minutes?` · ${w.minutes} min`:''}</div>
+        <div class="fi-what">${esc(acts.join(' + '))}${w.minutes?` · ${w.minutes} min`:''}</div>
         ${w.note?`<div class="fi-note">“${esc(w.note)}”</div>`:''}
       </div>
-      <button class="del" data-id="${w.id}" title="Delete">✕</button>
-    </div>`).join('');
+      <div style="display:flex;flex-direction:column;gap:2px;flex:none;">
+        <button class="edit" data-id="${w.id}" title="Edit">✎</button>
+        <button class="del" data-id="${w.id}" title="Delete">✕</button>
+      </div>
+    </div>`;}).join('');
+  el.querySelectorAll('.edit').forEach(b=>b.addEventListener('click', ()=>openSheet(b.dataset.id)));
   el.querySelectorAll('.del').forEach(b=>b.addEventListener('click', ()=>{
     if(confirm('Delete this workout?')){
       state.workouts = state.workouts.filter(w=>w.id!==b.dataset.id);
@@ -483,28 +499,40 @@ function renderFeed(){
 }
 
 /* ---------- log sheet ---------- */
-let selPerson = null, selActivity = 'Run';
+let selPerson = null, selActivities = ['Run'], editingId = null;
 const sheet = document.getElementById('sheet'), sheetBg = document.getElementById('sheetBg');
-function openSheet(){
-  selPerson = state.people.includes('Hall') ? 'Hall' : state.people[0] || null;
-  selActivity = 'Run';
-  document.getElementById('fDate').value = iso(new Date());
-  document.getElementById('fMin').value = '';
-  document.getElementById('fCustom').value = '';
-  document.getElementById('fNote').value = '';
+function openSheet(editId){
+  editingId = editId || null;
+  const w = editingId ? state.workouts.find(x=>x.id===editingId) : null;
+  const acts = w ? actList(w) : ['Run'];
+  selPerson = w ? w.person : (state.people.includes('Hall') ? 'Hall' : state.people[0] || null);
+  selActivities = acts.filter(a=>ACTIVITIES.some(x=>x[0]===a));
+  if(!w) selActivities = ['Run'];
+  document.getElementById('fDate').value = w ? w.date : iso(new Date());
+  document.getElementById('fMin').value = (w && w.minutes) ? w.minutes : '';
+  document.getElementById('fCustom').value = w ? acts.filter(a=>!ACTIVITIES.some(x=>x[0]===a)).join(', ') : '';
+  document.getElementById('fNote').value = w ? (w.note||'') : '';
   document.getElementById('dateWarn').style.display = 'none';
+  document.getElementById('sheetTitle').textContent = w ? 'Edit workout ✎' : 'Log a workout 💪';
+  document.getElementById('btnSave').textContent = w ? 'Save changes' : 'Save workout';
   renderChips();
   sheet.classList.add('open'); sheetBg.classList.add('open');
 }
-function closeSheet(){ sheet.classList.remove('open'); sheetBg.classList.remove('open'); }
+function closeSheet(){ editingId = null; sheet.classList.remove('open'); sheetBg.classList.remove('open'); }
 function renderChips(){
   document.getElementById('whoChips').innerHTML = state.people.map(p=>
     `<button class="${p===selPerson?'sel':''}" data-p="${esc(p)}">${esc(p)}</button>`).join('')
     || '<span style="color:var(--muted);font-size:13px">Add a person first (Leaderboard tab → Add person).</span>';
   document.querySelectorAll('#whoChips button').forEach(b=>b.addEventListener('click',()=>{selPerson=b.dataset.p; renderChips();}));
   document.getElementById('actChips').innerHTML = ACTIVITIES.map(([a,ic])=>
-    `<button class="${a===selActivity?'sel':''}" data-a="${a}">${ic} ${a}</button>`).join('');
-  document.querySelectorAll('#actChips button').forEach(b=>b.addEventListener('click',()=>{selActivity=b.dataset.a; renderChips();}));
+    `<button class="${selActivities.includes(a)?'sel':''}" data-a="${a}">${ic} ${a}</button>`).join('');
+  document.querySelectorAll('#actChips button').forEach(b=>b.addEventListener('click',()=>{
+    const a = b.dataset.a;
+    selActivities = selActivities.includes(a)
+      ? selActivities.filter(x=>x!==a)
+      : [...selActivities, a];
+    renderChips();
+  }));
 }
 document.getElementById('fab').addEventListener('click', openSheet);
 document.getElementById('btnCancel').addEventListener('click', closeSheet);
@@ -516,16 +544,29 @@ document.getElementById('btnSave').addEventListener('click', ()=>{
   if(!selPerson){ alert('Pick who this workout is for.'); return; }
   const date = document.getElementById('fDate').value;
   if(!date){ alert('Pick a date.'); return; }
-  const custom = document.getElementById('fCustom').value.trim();
+  const customActs = document.getElementById('fCustom').value.split(',')
+    .map(s=>s.trim()).filter(Boolean);
+  const acts = [...new Set([...selActivities, ...customActs])];
+  if(!acts.length){ alert('Pick at least one activity (or type your own).'); return; }
   const minutes = parseInt(document.getElementById('fMin').value,10);
-  state.workouts.push({
-    id: 'w'+Date.now()+Math.random().toString(36).slice(2,6),
-    person: selPerson, date,
-    activity: custom || selActivity,
-    minutes: minutes>0 ? minutes : null,
-    note: document.getElementById('fNote').value.trim(),
-    ts: Date.now()
-  });
+  const note = document.getElementById('fNote').value.trim();
+  if(editingId){
+    const w = state.workouts.find(x=>x.id===editingId);
+    if(w){
+      w.person = selPerson; w.date = date;
+      w.activities = acts; w.activity = acts[0];  // activity kept for older app versions
+      w.minutes = minutes>0 ? minutes : null;
+      w.note = note; w.updated = Date.now();
+    }
+  } else {
+    state.workouts.push({
+      id: 'w'+Date.now()+Math.random().toString(36).slice(2,6),
+      person: selPerson, date,
+      activities: acts, activity: acts[0],  // activity kept for older app versions
+      minutes: minutes>0 ? minutes : null,
+      note, ts: Date.now(), updated: Date.now()
+    });
+  }
   changed(); closeSheet();
 });
 
