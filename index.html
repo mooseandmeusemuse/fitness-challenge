@@ -194,7 +194,7 @@
 
   <footer>
     Challenge runs Aug 31 → Thanksgiving, Nov 26, 2026.<br>
-    Everyone with the link shares one live leaderboard. Your entries sync automatically.
+    Everyone with the link shares one live leaderboard. Your entries sync automatically — if you're offline, they're kept on your device and sent when you reconnect.
   </footer>
 </main>
 
@@ -243,6 +243,7 @@
 const SYNC_TOPIC = 'muse-ffc2026/7h3k9p2x4q/state';  // shared channel, baked in at build
 
 const STORAGE_KEY = 'ffc2026.v1';
+const PENDING_KEY = 'ffc2026.pending';
 const CHALLENGE_START = new Date(2026, 7, 31); // Mon Aug 31, 2026 (local)
 const CHALLENGE_END   = new Date(2026, 10, 29); // Sun Nov 29, 2026
 const THANKSGIVING    = new Date(2026, 10, 26);
@@ -294,15 +295,34 @@ function loadState(){
 }
 function saveState(){ try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){} }
 let state = loadState();
-let syncOnline = false, mqttClient = null, brokerIdx = 0;
+let mqttClient = null, brokerIdx = 0;
+let syncStatus = 'connecting';  // 'connecting' | 'online' | 'offline'
+let pendingSync = 0;
+try{ pendingSync = parseInt(localStorage.getItem(PENDING_KEY)||'0', 10)||0; }catch(e){}
+function savePending(){ try{ localStorage.setItem(PENDING_KEY, String(pendingSync)); }catch(e){} }
 
 /* ---------- shared live sync (MQTT — no accounts, no signup) ---------- */
 const BROKERS = ['wss://broker.hivemq.com:8884/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
 function setSyncBadge(){
   const el = document.getElementById('syncPill');
   if(!el) return;
-  el.textContent = syncOnline ? '● Live sync' : '● Offline';
-  el.classList.toggle('hot', syncOnline);
+  let label, tip = '';
+  if(syncStatus === 'online'){
+    label = '● Live sync';
+  }else if(syncStatus === 'connecting'){
+    label = '● Connecting…';
+    tip = 'Trying to reach the shared leaderboard…';
+  }else{
+    label = pendingSync > 0
+      ? `● Offline · ${pendingSync} change${pendingSync>1?'s':''} waiting`
+      : '● Offline';
+    tip = pendingSync > 0
+      ? 'No connection to the shared leaderboard. Your changes are saved on this device and will send automatically when it reconnects.'
+      : 'No connection to the shared leaderboard. New entries stay on this device until it reconnects.';
+  }
+  el.textContent = label;
+  el.title = tip;
+  el.classList.toggle('hot', syncStatus === 'online');
 }
 function mergeStates(a, b){
   const deleted = [...new Set([...(a.deleted||[]), ...(b.deleted||[])])];
@@ -317,11 +337,17 @@ function mergeStates(a, b){
            updatedAt: Math.max(a.updatedAt||0, b.updatedAt||0) };
 }
 function publishState(){
-  if(!mqttClient || !mqttClient.connected) return;
+  if(!mqttClient || !mqttClient.connected) return false;
   state.updatedAt = Date.now();
-  try{ mqttClient.publish(SYNC_TOPIC, JSON.stringify(state), {retain:true, qos:1}); }catch(e){}
+  try{ mqttClient.publish(SYNC_TOPIC, JSON.stringify(state), {retain:true, qos:1}); return true; }
+  catch(e){ return false; }
 }
-function changed(){ saveState(); renderAll(); publishState(); }
+function changed(){
+  saveState(); renderAll();
+  if(publishState()){ if(pendingSync){ pendingSync = 0; savePending(); } }
+  else { pendingSync++; savePending(); }
+  setSyncBadge();
+}
 function onRemoteMessage(msg){
   let remote; try{ remote = JSON.parse(msg.toString()); }catch(e){ return; }
   if(!remote || !Array.isArray(remote.workouts) || !Array.isArray(remote.people)) return;
@@ -332,18 +358,27 @@ function onRemoteMessage(msg){
   if(diff) publishState();   // fold our entries back in so simultaneous edits never lose data
 }
 function connectSync(){
-  if(typeof mqtt === 'undefined'){ setSyncBadge(); return; }  // CDN unreachable → local-only mode
+  if(typeof mqtt === 'undefined'){ syncStatus = 'offline'; setSyncBadge(); return; }  // CDN unreachable → local-only mode
+  if(syncStatus !== 'online') syncStatus = 'connecting';
+  setSyncBadge();
   try{ if(mqttClient) mqttClient.end(true); }catch(e){}
   const client = mqtt.connect(BROKERS[brokerIdx], {reconnectPeriod:4000, connectTimeout:12000});
   mqttClient = client;
-  client.on('connect', ()=>{ syncOnline = true; setSyncBadge(); try{client.subscribe(SYNC_TOPIC,{qos:1});}catch(e){} });
+  client.on('connect', ()=>{
+    syncStatus = 'online';
+    try{client.subscribe(SYNC_TOPIC,{qos:1});}catch(e){}
+    if(publishState()){ pendingSync = 0; savePending(); }  // flush anything saved while offline
+    setSyncBadge();
+  });
   client.on('message', (topic, msg)=>{ if(topic === SYNC_TOPIC) onRemoteMessage(msg); });
-  const markOff = ()=>{ if(syncOnline){ syncOnline = false; setSyncBadge(); } };
+  const markOff = ()=>{ if(syncStatus !== 'offline'){ syncStatus = 'offline'; setSyncBadge(); } };
   client.on('close', markOff);
   client.on('reconnect', markOff);
   client.on('error', ()=>{
+    syncStatus = 'offline';
     brokerIdx = (brokerIdx + 1) % BROKERS.length;
     try{ client.end(true); }catch(e){}
+    setSyncBadge();
     setTimeout(connectSync, 1500);
   });
 }
@@ -502,7 +537,7 @@ function renderFeed(){
 let selPerson = null, selActivities = ['Run'], editingId = null;
 const sheet = document.getElementById('sheet'), sheetBg = document.getElementById('sheetBg');
 function openSheet(editId){
-  editingId = editId || null;
+  editingId = (typeof editId === 'string' && editId) ? editId : null;
   const w = editingId ? state.workouts.find(x=>x.id===editingId) : null;
   const acts = w ? actList(w) : ['Run'];
   selPerson = w ? w.person : (state.people.includes('Hall') ? 'Hall' : state.people[0] || null);
@@ -534,7 +569,7 @@ function renderChips(){
     renderChips();
   }));
 }
-document.getElementById('fab').addEventListener('click', openSheet);
+document.getElementById('fab').addEventListener('click', ()=>openSheet(null));
 document.getElementById('btnCancel').addEventListener('click', closeSheet);
 sheetBg.addEventListener('click', closeSheet);
 document.getElementById('fDate').addEventListener('change', e=>{
