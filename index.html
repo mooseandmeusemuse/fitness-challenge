@@ -129,6 +129,9 @@
   }
   textarea{resize:vertical; min-height:56px;}
   .row2{display:flex; gap:10px;} .row2>div{flex:1; min-width:0;}  /* min-width:0 lets date/minutes inputs shrink on narrow phones */
+  @media (max-width:520px){
+    .row2{flex-direction:column; gap:0;}  /* stack date/minutes on phones so they can never overlap */
+  }
   input[type=text],input[type=date],input[type=number],textarea{max-width:100%;}
   .btn{
     width:100%; border:none; border-radius:14px; padding:15px; font-size:16px; font-weight:800;
