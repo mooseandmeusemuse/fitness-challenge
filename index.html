@@ -14,6 +14,7 @@
     --danger:#ff6b6b; --radius:16px;
   }
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{overflow-x:clip;}  /* never allow page-level horizontal scroll; sticky still works */
   body{
     margin:0; font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     background:radial-gradient(1200px 600px at 50% -10%, #1a2440 0%, var(--bg) 60%) fixed, var(--bg);
@@ -89,8 +90,8 @@
   .fi-top{display:flex; align-items:baseline; gap:8px; flex-wrap:wrap;}
   .fi-name{font-weight:700; font-size:14.5px;}
   .fi-date{color:var(--muted); font-size:12px; margin-left:auto;}
-  .fi-what{font-size:14px; margin-top:2px;}
-  .fi-note{color:var(--muted); font-size:13px; margin-top:3px; font-style:italic;}
+  .fi-what{font-size:14px; margin-top:2px; overflow-wrap:anywhere;}
+  .fi-note{color:var(--muted); font-size:13px; margin-top:3px; font-style:italic; overflow-wrap:anywhere;}
   .del{border:none; background:none; color:var(--muted); font-size:16px; cursor:pointer; padding:4px;}
   .edit{border:none; background:none; color:var(--muted); font-size:15px; cursor:pointer; padding:4px;}
   .edit:active,.del:active{color:var(--text);}
@@ -127,7 +128,8 @@
     border-radius:12px; padding:12px; font-size:15px; font-family:inherit;
   }
   textarea{resize:vertical; min-height:56px;}
-  .row2{display:flex; gap:10px;} .row2>div{flex:1;}
+  .row2{display:flex; gap:10px;} .row2>div{flex:1; min-width:0;}  /* min-width:0 lets date/minutes inputs shrink on narrow phones */
+  input[type=text],input[type=date],input[type=number],textarea{max-width:100%;}
   .btn{
     width:100%; border:none; border-radius:14px; padding:15px; font-size:16px; font-weight:800;
     background:var(--accent); color:#10160a; cursor:pointer; margin-top:16px;
