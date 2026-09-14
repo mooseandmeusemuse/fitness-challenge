@@ -251,7 +251,7 @@ const WEEKS = 13;
 const BONUS_AT = 4, BONUS_PTS = 4;
 
 const ACTIVITIES = [
-  ['Run','🏃'],['Lift','🏋️'],['Hoops','🏀'],['Walk','🚶'],['Bike','🚴'],
+  ['Run','🏃'],['Lift','🏋️'],['Hoops','🏀'],['Tennis','🎾'],['Walk','🚶'],['Bike','🚴'],
   ['Swim','🏊'],['Yoga','🧘'],['Sport','⚽'],['HIIT','🔥'],['Other','✨']
 ];
 const COLORS = ['#c6f24e','#5ec8f2','#f25e8a','#ffd166','#b18cff','#5ef2b8','#f2a65e','#8affda','#f28ab2','#a3b8ff'];
@@ -540,7 +540,7 @@ function openSheet(editId){
   editingId = (typeof editId === 'string' && editId) ? editId : null;
   const w = editingId ? state.workouts.find(x=>x.id===editingId) : null;
   const acts = w ? actList(w) : ['Run'];
-  selPerson = w ? w.person : (state.people.includes('Hall') ? 'Hall' : state.people[0] || null);
+  selPerson = w ? w.person : null;  // no default — user must pick who it's for
   selActivities = acts.filter(a=>ACTIVITIES.some(x=>x[0]===a));
   if(!w) selActivities = ['Run'];
   document.getElementById('fDate').value = w ? w.date : iso(new Date());
