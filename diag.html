@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>sync diag</title>
+<script src="https://unpkg.com/mqtt@5.10.3/dist/mqtt.min.js"></script>
+</head>
+<body style="background:#0c1017;color:#eef2f8;font-family:monospace;padding:16px;">
+<h3>Sync diagnostic (read-only: subscribes, never publishes)</h3>
+<pre id="out">connecting to both brokers…</pre>
+<script>
+const TOPIC = 'muse-ffc2026/7h3k9p2x4q/state';
+const out = document.getElementById('out');
+const results = {};
+function render(){
+  let txt = '';
+  for(const name of ['HiveMQ','EMQX']){
+    const r = results[name];
+    txt += name + ': ' + (r ? r : 'waiting for retained message…') + '\n';
+  }
+  out.textContent = txt;
+}
+[['HiveMQ','wss://broker.hivemq.com:8884/mqtt'],['EMQX','wss://broker.emqx.io:8084/mqtt']].forEach(([name,url])=>{
+  try{
+    const c = mqtt.connect(url,{reconnectPeriod:4000,connectTimeout:15000,clientId:'diag-'+Math.random().toString(36).slice(2,9)});
+    c.on('connect',()=>{ try{ c.subscribe(TOPIC,{qos:0}); }catch(e){} });
+    c.on('message',(t,m)=>{
+      try{
+        const s = JSON.parse(m.toString());
+        const counts = {};
+        (s.workouts||[]).forEach(w=>{ counts[w.person]=(counts[w.person]||0)+1; });
+        const ids = (s.workouts||[]).map(w=>String(w.id));
+        results[name] = 'workouts='+s.workouts.length+' deleted='+((s.deleted||[]).length)+
+          ' updatedAt='+s.updatedAt+' counts='+JSON.stringify(counts)+
+          ' ids_tail='+JSON.stringify(ids.slice(-12));
+      }catch(e){ results[name] = 'PARSE ERROR bytes='+m.length; }
+      render();
+    });
+    c.on('error',()=>{ if(!results[name]){ results[name]='CONNECTION ERROR'; render(); } });
+    c.on('close',()=>{ if(!results[name]){ results[name]='CLOSED (no data)'; render(); } });
+  }catch(e){ results[name]='EXCEPTION'; render(); }
+});
+render();
+setTimeout(render, 20000);
+</script>
+</body>
+</html>
