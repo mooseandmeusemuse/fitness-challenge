@@ -300,34 +300,46 @@ function loadState(){
 }
 function saveState(){ try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){} }
 let state = loadState();
-let mqttClient = null, brokerIdx = 0;
+let mqttClients = [];  // one live connection per broker (see below)
 let syncStatus = 'connecting';  // 'connecting' | 'online' | 'offline'
 let pendingSync = 0;
 try{ pendingSync = parseInt(localStorage.getItem(PENDING_KEY)||'0', 10)||0; }catch(e){}
 function savePending(){ try{ localStorage.setItem(PENDING_KEY, String(pendingSync)); }catch(e){} }
 
-/* ---------- shared live sync (MQTT — no accounts, no signup) ---------- */
-const BROKERS = ['wss://broker.hivemq.com:8884/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
+/* ---------- shared live sync (MQTT — no accounts, no signup) ----------
+   We hold a connection to EVERY broker and publish/subscribe on all of them.
+   (An older version used one broker and switched on error — but each broker
+   keeps its own copy of the shared board, so phones on different brokers
+   stopped seeing each other's updates while every phone showed "Live sync".) */
+const BROKERS = [
+  ['HiveMQ','wss://broker.hivemq.com:8884/mqtt'],
+  ['EMQX','wss://broker.emqx.io:8084/mqtt']
+];
+function liveBrokerNames(){
+  return BROKERS.filter((b,i)=>mqttClients[i] && mqttClients[i].connected).map(b=>b[0]);
+}
 function setSyncBadge(){
   const el = document.getElementById('syncPill');
   if(!el) return;
   let label, tip = '';
+  const waiting = pendingSync > 0 ? ` · ${pendingSync} change${pendingSync>1?'s':''} waiting` : '';
   if(syncStatus === 'online'){
-    label = '● Live sync';
+    label = '● Live sync' + waiting;
+    const names = liveBrokerNames().join(' + ');
+    tip = (names ? `Connected via ${names}.` : '') +
+      (pendingSync > 0 ? ' Some changes are saved on this device and will finish sending automatically.' : '');
   }else if(syncStatus === 'connecting'){
     label = '● Connecting…';
     tip = 'Trying to reach the shared leaderboard…';
   }else{
-    label = pendingSync > 0
-      ? `● Offline · ${pendingSync} change${pendingSync>1?'s':''} waiting`
-      : '● Offline';
+    label = '● Offline' + waiting;
     tip = pendingSync > 0
       ? 'No connection to the shared leaderboard. Your changes are saved on this device and will send automatically when it reconnects.'
       : 'No connection to the shared leaderboard. New entries stay on this device until it reconnects.';
   }
   el.textContent = label;
   el.title = tip;
-  el.classList.toggle('hot', syncStatus === 'online');
+  el.classList.toggle('hot', syncStatus === 'online' && !pendingSync);
 }
 function mergeStates(a, b){
   const deleted = [...new Set([...(a.deleted||[]), ...(b.deleted||[])])];
@@ -342,10 +354,16 @@ function mergeStates(a, b){
            updatedAt: Math.max(a.updatedAt||0, b.updatedAt||0) };
 }
 function publishState(){
-  if(!mqttClient || !mqttClient.connected) return false;
+  if(typeof mqtt === 'undefined' || !mqttClients.length) return false;
   state.updatedAt = Date.now();
-  try{ mqttClient.publish(SYNC_TOPIC, JSON.stringify(state), {retain:true, qos:1}); return true; }
-  catch(e){ return false; }
+  const payload = JSON.stringify(state);
+  let ok = false;
+  for(const c of mqttClients){
+    if(!c || !c.connected) continue;
+    try{ c.publish(SYNC_TOPIC, payload, {retain:true, qos:1}); ok = true; }
+    catch(e){}
+  }
+  return ok;
 }
 function changed(){
   saveState(); renderAll();
@@ -362,32 +380,35 @@ function onRemoteMessage(msg){
   saveState(); renderAll();
   if(diff) publishState();   // fold our entries back in so simultaneous edits never lose data
 }
-function connectSync(){
-  if(typeof mqtt === 'undefined'){ syncStatus = 'offline'; setSyncBadge(); return; }  // CDN unreachable → local-only mode
-  if(syncStatus !== 'online') syncStatus = 'connecting';
+function updateSyncStatus(){
+  if(typeof mqtt === 'undefined'){ syncStatus = 'offline'; }
+  else if(mqttClients.some(c=>c && c.connected)){ syncStatus = 'online'; }
+  else if(mqttClients.length){ syncStatus = 'offline'; }
+  else { syncStatus = 'connecting'; }
   setSyncBadge();
-  try{ if(mqttClient) mqttClient.end(true); }catch(e){}
-  const client = mqtt.connect(BROKERS[brokerIdx], {reconnectPeriod:4000, connectTimeout:12000});
-  mqttClient = client;
-  client.on('connect', ()=>{
-    syncStatus = 'online';
-    try{client.subscribe(SYNC_TOPIC,{qos:1});}catch(e){}
-    if(publishState()){ pendingSync = 0; savePending(); }  // flush anything saved while offline
-    setSyncBadge();
-  });
-  client.on('message', (topic, msg)=>{ if(topic === SYNC_TOPIC) onRemoteMessage(msg); });
-  const markOff = ()=>{ if(syncStatus !== 'offline'){ syncStatus = 'offline'; setSyncBadge(); } };
-  client.on('close', markOff);
-  client.on('reconnect', markOff);
-  client.on('error', ()=>{
-    syncStatus = 'offline';
-    brokerIdx = (brokerIdx + 1) % BROKERS.length;
-    try{ client.end(true); }catch(e){}
-    setSyncBadge();
-    setTimeout(connectSync, 1500);
-  });
 }
-setInterval(()=>{ if(mqttClient && !mqttClient.connected) connectSync(); }, 30000);
+function connectSync(){
+  if(typeof mqtt === 'undefined'){ updateSyncStatus(); return; }  // CDN unreachable → local-only mode
+  BROKERS.forEach(([name, url], i)=>{
+    if(mqttClients[i]) return;  // already managing this broker
+    let client;
+    try{ client = mqtt.connect(url, {reconnectPeriod:8000, connectTimeout:15000}); }
+    catch(e){ return; }
+    mqttClients[i] = client;
+    client.on('connect', ()=>{
+      try{ client.subscribe(SYNC_TOPIC,{qos:1}); }catch(e){}
+      if(publishState()){ pendingSync = 0; savePending(); }  // flush anything saved while offline, to every broker we're on
+      updateSyncStatus();
+    });
+    client.on('message', (topic, msg)=>{ if(topic === SYNC_TOPIC) onRemoteMessage(msg); });
+    client.on('close', updateSyncStatus);
+    client.on('reconnect', updateSyncStatus);
+    // No broker switching: mqtt.js auto-reconnects, and every broker carries the same data.
+    client.on('error', updateSyncStatus);
+  });
+  updateSyncStatus();
+}
+setInterval(updateSyncStatus, 15000);
 
 /* ---------- dates & scoring ---------- */
 const DAY = 86400000;
